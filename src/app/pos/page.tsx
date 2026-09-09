@@ -28,12 +28,14 @@ export default function POSPage() {
 
   const [activeTab, setActiveTab] = useState<"menu" | "cart">("menu");
   const [selectedCategory, setSelectedCategory] = useState<"all" | "waffle" | "drink">("all");
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  
+  // 画面遷移モード (cart: カート確認 / payment: お会計入力)
+  const [checkoutMode, setCheckoutMode] = useState<"cart" | "payment">("cart");
   const [receivedAmount, setReceivedAmount] = useState<number>(0);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
 
-  // トースト通知を3秒後に自動クリアする
+  // トースト通知を3秒後に自動消去
   useEffect(() => {
     if (notification) {
       const timer = setTimeout(() => {
@@ -47,6 +49,13 @@ export default function POSPage() {
     selectedCategory === "all" ? true : p.category === selectedCategory
   );
 
+  // 会計に進む時の初期化
+  const handleStartPayment = () => {
+    setReceivedAmount(totalAmount); // 初期値は「ぴったり」
+    setCheckoutMode("payment");
+  };
+
+  // 会計完了処理
   const handleCompletePayment = () => {
     if (receivedAmount < totalAmount) {
       alert("預かり金額が不足しています");
@@ -54,7 +63,7 @@ export default function POSPage() {
     }
     const order = completeOrder(receivedAmount);
     setLastOrder(order);
-    setIsPaymentModalOpen(false);
+    setCheckoutMode("cart");
     setReceivedAmount(0);
     setNotification(`注文 #${order.orderNumber} の会計が完了しました`);
   };
@@ -62,6 +71,10 @@ export default function POSPage() {
   const handleQuickMoney = (amount: number) => {
     setReceivedAmount((prev) => prev + amount);
   };
+
+  // 硬貨・紙幣のラインナップ
+  const coins = [1, 5, 10, 50, 100, 500];
+  const bills = [1000, 2000, 5000, 10000];
 
   return (
     <div className="min-h-screen bg-neutral-100 text-neutral-800 flex flex-col font-sans selection:bg-neutral-200 relative">
@@ -140,7 +153,7 @@ export default function POSPage() {
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 md:p-6 grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6">
         {/* 左側: 商品選択エリア */}
         <div
-          className={`md:col-span-7 lg:col-span-8 space-y-4 ${
+          className={`md:col-span-7 lg:col-span-7 space-y-4 ${
             activeTab === "menu" ? "block" : "hidden md:block"
           }`}
         >
@@ -192,130 +205,238 @@ export default function POSPage() {
           </div>
         </div>
 
-        {/* 右側: カート ＆ 決済エリア */}
+        {/* 右側: カート ＆ 決済エリア（インラインシームレス切り替え） */}
         <div
-          className={`md:col-span-5 lg:col-span-4 ${
+          className={`md:col-span-5 lg:col-span-5 ${
             activeTab === "cart" ? "block" : "hidden md:block"
           }`}
         >
-          <div className="bg-white border border-neutral-200 rounded-xl p-4 md:p-5 shadow-sm space-y-4 sticky top-[73px]">
-            <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
-              <h2 className="font-bold text-neutral-800 text-base">注文内容</h2>
-              {cart.length > 0 && (
-                <button
-                  onClick={clearCart}
-                  className="text-xs text-neutral-400 hover:text-neutral-600 transition"
-                >
-                  すべてクリア
-                </button>
-              )}
-            </div>
-
-            {/* カート内アイテム一覧 */}
-            <div className="space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
-              {cart.length === 0 ? (
-                <div className="text-center py-10 text-neutral-400 text-xs">
-                  商品を選択してください
+          <div className="bg-white border border-neutral-200 rounded-2xl p-4 md:p-5 shadow-sm space-y-4 sticky top-[73px]">
+            
+            {/* 【1. カートモード】 */}
+            {checkoutMode === "cart" ? (
+              <>
+                <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
+                  <h2 className="font-bold text-neutral-800 text-base">注文内容</h2>
+                  {cart.length > 0 && (
+                    <button
+                      onClick={clearCart}
+                      className="text-xs text-neutral-400 hover:text-neutral-600 transition"
+                    >
+                      すべてクリア
+                    </button>
+                  )}
                 </div>
-              ) : (
-                cart.map((item) => (
-                  <div
-                    key={item.product.id}
-                    className="flex justify-between items-center p-2.5 bg-neutral-50 rounded-lg border border-neutral-100"
-                  >
-                    <div className="flex-1 pr-2">
-                      <div className="font-medium text-xs md:text-sm text-neutral-800">
-                        {item.product.name}
-                      </div>
-                      <div className="text-[11px] text-neutral-400">
-                        {item.product.currentPrice}円 × {item.quantity}
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center border border-neutral-300 rounded-md bg-white">
-                        <button
-                          onClick={() => updateQuantity(item.product.id, -1)}
-                          className="w-7 h-7 flex items-center justify-center text-xs font-bold text-neutral-600 hover:bg-neutral-100"
-                        >
-                          -
-                        </button>
-                        <span className="w-6 text-center text-xs font-bold text-neutral-800">
-                          {item.quantity}
-                        </span>
-                        <button
-                          onClick={() => updateQuantity(item.product.id, 1)}
-                          className="w-7 h-7 flex items-center justify-center text-xs font-bold text-neutral-600 hover:bg-neutral-100"
-                        >
-                          +
-                        </button>
-                      </div>
-                      <button
-                        onClick={() => removeFromCart(item.product.id)}
-                        className="text-neutral-300 hover:text-neutral-500 p-1 text-xs"
+                {/* カート内アイテム一覧 */}
+                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+                  {cart.length === 0 ? (
+                    <div className="text-center py-12 text-neutral-400 text-xs">
+                      商品を選択してください
+                    </div>
+                  ) : (
+                    cart.map((item) => (
+                      <div
+                        key={item.product.id}
+                        className="flex justify-between items-center p-2.5 bg-neutral-50 rounded-lg border border-neutral-100"
                       >
-                        ✕
-                      </button>
+                        <div className="flex-1 pr-2">
+                          <div className="font-medium text-xs md:text-sm text-neutral-800">
+                            {item.product.name}
+                          </div>
+                          <div className="text-[11px] text-neutral-400">
+                            {item.product.currentPrice}円 × {item.quantity}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center border border-neutral-300 rounded-md bg-white">
+                            <button
+                              onClick={() => updateQuantity(item.product.id, -1)}
+                              className="w-7 h-7 flex items-center justify-center text-xs font-bold text-neutral-600 hover:bg-neutral-100"
+                            >
+                              -
+                            </button>
+                            <span className="w-6 text-center text-xs font-bold text-neutral-800">
+                              {item.quantity}
+                            </span>
+                            <button
+                              onClick={() => updateQuantity(item.product.id, 1)}
+                              className="w-7 h-7 flex items-center justify-center text-xs font-bold text-neutral-600 hover:bg-neutral-100"
+                            >
+                              +
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => removeFromCart(item.product.id)}
+                            className="text-neutral-300 hover:text-neutral-500 p-1 text-xs"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* クーポン設定 */}
+                <div className="pt-2 border-t border-neutral-100">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={hasCoupon}
+                      onChange={(e) => setHasCoupon(e.target.checked)}
+                      className="w-4 h-4 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-400"
+                    />
+                    <span className="text-xs font-medium text-neutral-700">
+                      割引クーポンを利用（-100円）
+                    </span>
+                  </label>
+                </div>
+
+                {/* 金額計算サマリー */}
+                <div className="space-y-1.5 pt-2 border-t border-neutral-100 text-xs">
+                  <div className="flex justify-between text-neutral-500">
+                    <span>小計 ({totalQuantity}点)</span>
+                    <span>{subtotal.toLocaleString()} 円</span>
+                  </div>
+
+                  {discountAmount > 0 && (
+                    <div className="flex justify-between text-emerald-600 font-medium">
+                      <span>割引額</span>
+                      <span>-{discountAmount.toLocaleString()} 円</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-baseline pt-2 border-t border-neutral-200">
+                    <span className="font-bold text-neutral-800 text-sm">合計</span>
+                    <span className="text-2xl font-extrabold text-neutral-900">
+                      {totalAmount.toLocaleString()}
+                      <span className="text-xs font-normal text-neutral-500 ml-1">円</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* お会計に進むボタン */}
+                <button
+                  disabled={cart.length === 0}
+                  onClick={handleStartPayment}
+                  className="w-full py-3.5 bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white rounded-xl font-bold text-sm transition shadow-sm"
+                >
+                  お会計へ進む
+                </button>
+              </>
+            ) : (
+              /* 【2. お会計入力モード】（ポップアップではなく右側エリアがそのまま変化） */
+              <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
+                <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
+                  <button
+                    onClick={() => setCheckoutMode("cart")}
+                    className="text-xs text-neutral-500 hover:text-neutral-900 flex items-center gap-1 font-bold"
+                  >
+                    ← 注文内容に戻る
+                  </button>
+                  <span className="text-xs font-bold text-neutral-400">お支払い手続き</span>
+                </div>
+
+                {/* 請求額・預かり額・お釣りサマリー */}
+                <div className="bg-neutral-900 text-white p-4 rounded-xl space-y-2 shadow-inner">
+                  <div className="flex justify-between text-xs text-neutral-400">
+                    <span>請求金額</span>
+                    <span className="font-bold text-white text-sm">{totalAmount.toLocaleString()} 円</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-neutral-400">
+                    <span>お預かり</span>
+                    <span className="font-bold text-amber-400 text-base">{receivedAmount.toLocaleString()} 円</span>
+                  </div>
+                  <div className="flex justify-between items-baseline pt-2 border-t border-neutral-800">
+                    <span className="text-xs font-bold text-neutral-300">お釣り</span>
+                    <span className={`text-2xl font-black ${receivedAmount >= totalAmount ? "text-emerald-400" : "text-rose-400"}`}>
+                      {receivedAmount >= totalAmount
+                        ? `${(receivedAmount - totalAmount).toLocaleString()} 円`
+                        : "不足"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 預かり金額操作エリア */}
+                <div className="space-y-3">
+                  {/* 「ぴったり」＆「クリア」クイックボタン */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setReceivedAmount(totalAmount)}
+                      className="flex-1 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-xs rounded-lg transition border border-neutral-200"
+                    >
+                      ぴったり (¥{totalAmount.toLocaleString()})
+                    </button>
+                    <button
+                      onClick={() => setReceivedAmount(0)}
+                      className="px-4 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-medium text-xs rounded-lg transition border border-neutral-200"
+                    >
+                      クリア
+                    </button>
+                  </div>
+
+                  {/* 小銭ボタン (1円〜500円) */}
+                  <div>
+                    <span className="text-[10px] font-bold text-neutral-400 block mb-1">硬貨</span>
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                      {coins.map((coin) => (
+                        <button
+                          key={coin}
+                          onClick={() => handleQuickMoney(coin)}
+                          className="py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs rounded-lg border border-amber-200/60 transition active:scale-95"
+                        >
+                          +{coin}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                ))
-              )}
-            </div>
 
-            {/* クーポン設定 */}
-            <div className="pt-2 border-t border-neutral-100">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={hasCoupon}
-                  onChange={(e) => setHasCoupon(e.target.checked)}
-                  className="w-4 h-4 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-400"
-                />
-                <span className="text-xs font-medium text-neutral-700">
-                  割引クーポンを利用（-100円）
-                </span>
-              </label>
-            </div>
+                  {/* 紙幣ボタン (1,000円〜10,000円) */}
+                  <div>
+                    <span className="text-[10px] font-bold text-neutral-400 block mb-1">紙幣</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                      {bills.map((bill) => (
+                        <button
+                          key={bill}
+                          onClick={() => handleQuickMoney(bill)}
+                          className="py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-bold text-xs rounded-lg border border-emerald-200/60 transition active:scale-95"
+                        >
+                          +{bill.toLocaleString()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-            {/* 金額計算サマリー */}
-            <div className="space-y-1.5 pt-2 border-t border-neutral-100 text-xs">
-              <div className="flex justify-between text-neutral-500">
-                <span>小計 ({totalQuantity}点)</span>
-                <span>{subtotal.toLocaleString()} 円</span>
-              </div>
-
-              {discountAmount > 0 && (
-                <div className="flex justify-between text-emerald-600 font-medium">
-                  <span>割引額</span>
-                  <span>-{discountAmount.toLocaleString()} 円</span>
+                  {/* 手入力インプット */}
+                  <div className="pt-1">
+                    <input
+                      type="number"
+                      value={receivedAmount || ""}
+                      onChange={(e) => setReceivedAmount(Number(e.target.value))}
+                      placeholder="金額を直接入力"
+                      className="w-full p-2.5 border border-neutral-300 rounded-xl text-right font-bold text-sm focus:outline-none focus:ring-2 focus:ring-neutral-400"
+                    />
+                  </div>
                 </div>
-              )}
 
-              <div className="flex justify-between items-baseline pt-2 border-t border-neutral-200">
-                <span className="font-bold text-neutral-800 text-sm">合計</span>
-                <span className="text-2xl font-extrabold text-neutral-900">
-                  {totalAmount.toLocaleString()}
-                  <span className="text-xs font-normal text-neutral-500 ml-1">円</span>
-                </span>
+                {/* 会計完了ボタン */}
+                <button
+                  disabled={receivedAmount < totalAmount}
+                  onClick={handleCompletePayment}
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-200 disabled:text-neutral-400 text-white rounded-xl font-bold text-base transition shadow-md active:scale-[0.99]"
+                >
+                  会計を確定する
+                </button>
               </div>
-            </div>
+            )}
 
-            {/* 会計ボタン */}
-            <button
-              disabled={cart.length === 0}
-              onClick={() => {
-                setReceivedAmount(totalAmount);
-                setIsPaymentModalOpen(true);
-              }}
-              className="w-full py-3.5 bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white rounded-xl font-bold text-sm transition shadow-sm"
-            >
-              会計に進む
-            </button>
           </div>
         </div>
       </main>
 
-      {/* 右下トースト通知（3秒で自動消去・画面揺れなし） */}
+      {/* 右下トースト通知 */}
       {notification && (
         <div className="fixed bottom-5 right-5 z-50 animate-in fade-in slide-in-from-bottom-3 duration-200">
           <div className="bg-neutral-900/90 backdrop-blur-md text-white px-4 py-3 rounded-xl shadow-xl border border-neutral-700/60 flex items-center gap-3">
@@ -327,96 +448,6 @@ export default function POSPage() {
             >
               ✕
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* 会計モーダル（デザイン改善：ほんのり暗いバックドロップ＆上品なカード感） */}
-      {isPaymentModalOpen && (
-        <div className="fixed inset-0 bg-neutral-950/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-neutral-100">
-            <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
-              <h3 className="font-bold text-neutral-800 text-base">お支払い手続き</h3>
-              <button
-                onClick={() => setIsPaymentModalOpen(false)}
-                className="text-neutral-400 hover:text-neutral-600 text-sm p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-1.5 bg-neutral-50 p-3.5 rounded-xl border border-neutral-100">
-              <div className="flex justify-between text-xs text-neutral-500">
-                <span>請求合計</span>
-                <span className="font-bold text-neutral-800">
-                  {totalAmount.toLocaleString()} 円
-                </span>
-              </div>
-              <div className="flex justify-between text-xs text-neutral-500">
-                <span>預かり金額</span>
-                <span className="font-bold text-neutral-900 text-base">
-                  {receivedAmount.toLocaleString()} 円
-                </span>
-              </div>
-              <div className="flex justify-between text-xs pt-2 border-t border-neutral-200 font-bold">
-                <span>お釣り</span>
-                <span
-                  className={
-                    receivedAmount >= totalAmount ? "text-emerald-600 text-sm" : "text-rose-600"
-                  }
-                >
-                  {receivedAmount >= totalAmount
-                    ? `${(receivedAmount - totalAmount).toLocaleString()} 円`
-                    : "金額不足"}
-                </span>
-              </div>
-            </div>
-
-            {/* クイック現金ボタン */}
-            <div className="grid grid-cols-4 gap-1.5">
-              {[100, 500, 1000, 5000].map((amt) => (
-                <button
-                  key={amt}
-                  onClick={() => handleQuickMoney(amt)}
-                  className="py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-medium text-xs rounded-lg transition border border-neutral-200/50"
-                >
-                  +{amt}
-                </button>
-              ))}
-            </div>
-
-            {/* 直接入力 ＆ クリア */}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setReceivedAmount(0)}
-                className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 text-xs font-medium rounded-lg border border-neutral-200/50"
-              >
-                クリア
-              </button>
-              <input
-                type="number"
-                value={receivedAmount || ""}
-                onChange={(e) => setReceivedAmount(Number(e.target.value))}
-                placeholder="預かり金額"
-                className="flex-1 p-2 border border-neutral-300 rounded-lg text-right font-bold text-sm focus:outline-none focus:ring-2 focus:ring-neutral-400"
-              />
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => setIsPaymentModalOpen(false)}
-                className="flex-1 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold text-xs rounded-xl transition"
-              >
-                キャンセル
-              </button>
-              <button
-                disabled={receivedAmount < totalAmount}
-                onClick={handleCompletePayment}
-                className="flex-1 py-3 bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white font-bold text-xs rounded-xl transition shadow-sm"
-              >
-                会計完了
-              </button>
-            </div>
           </div>
         </div>
       )}
