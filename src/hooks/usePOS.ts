@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
-// ⚠️ ご自身の Google Apps Script の Web App URL
-const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzXI6OREZINVr2P0EOmXV7hvG98rJaG80UDgQPVjW0qhwuvCjAv8BXIRp1bvqYdsGKY/exec";
+const GAS_WEB_APP_URL =
+  "https://script.google.com/macros/s/AKfycbzXI6OREZINVr2P0EOmXV7hvG98rJaG80UDgQPVjW0qhwuvCjAv8BXIRp1bvqYdsGKY/exec";
 
 export interface Product {
   id: string;
@@ -11,6 +11,7 @@ export interface Product {
   category: "waffle" | "drink";
   basePrice: number;
   currentPrice: number;
+  stock: number; // ★ 在庫数を追加
 }
 
 export interface CartItem {
@@ -43,11 +44,11 @@ export interface Order {
 }
 
 const INITIAL_PRODUCTS: Product[] = [
-  { id: "waffle-plain", name: "プレーン", category: "waffle", basePrice: 400, currentPrice: 400 },
-  { id: "waffle-caramel", name: "キャラメル", category: "waffle", basePrice: 400, currentPrice: 400 },
-  { id: "waffle-maple", name: "メープル", category: "waffle", basePrice: 400, currentPrice: 400 },
-  { id: "waffle-chocolate", name: "チョコ", category: "waffle", basePrice: 400, currentPrice: 400 },
-  { id: "drink-soda", name: "ソーダ味", category: "drink", basePrice: 400, currentPrice: 400 },
+  { id: "waffle-plain", name: "プレーン", category: "waffle", basePrice: 400, currentPrice: 400, stock: 30 },
+  { id: "waffle-caramel", name: "キャラメル", category: "waffle", basePrice: 400, currentPrice: 400, stock: 30 },
+  { id: "waffle-maple", name: "メープル", category: "waffle", basePrice: 400, currentPrice: 400, stock: 30 },
+  { id: "waffle-chocolate", name: "チョコ", category: "waffle", basePrice: 400, currentPrice: 400, stock: 30 },
+  { id: "drink-soda", name: "ソーダ味", category: "drink", basePrice: 400, currentPrice: 400, stock: 50 },
 ];
 
 export function usePOS() {
@@ -63,6 +64,24 @@ export function usePOS() {
 
   const isSyncingRef = useRef<boolean>(false);
 
+  // 初回ロード時に localStorage から商品（在庫情報含む）を復元
+  useEffect(() => {
+    const savedProducts = localStorage.getItem("pos_products");
+    if (savedProducts) {
+      try {
+        setProducts(JSON.parse(savedProducts));
+      } catch (e) {
+        console.error("Failed to parse saved products", e);
+      }
+    }
+  }, []);
+
+  // 商品データ変更時に localStorage に保存
+  const saveProductsToStorage = (updatedProducts: Product[]) => {
+    setProducts(updatedProducts);
+    localStorage.setItem("pos_products", JSON.stringify(updatedProducts));
+  };
+
   // 1. スプレッドシートからデータを取得し、重複を除外してマージ
   const fetchAndMergeOrders = useCallback(async () => {
     if (!navigator.onLine || !GAS_WEB_APP_URL || GAS_WEB_APP_URL.includes("YOUR_GAS")) return;
@@ -72,7 +91,7 @@ export function usePOS() {
       const fetchUrl = `${GAS_WEB_APP_URL}?t=${Date.now()}`;
       const res = await fetch(fetchUrl, {
         method: "GET",
-        headers: { "Accept": "application/json" }
+        headers: { Accept: "application/json" },
       });
 
       if (!res.ok) return;
@@ -103,15 +122,12 @@ export function usePOS() {
           };
         });
 
-        // 重複を除外するための Map 処理
         const orderMap = new Map<string, Order>();
 
-        // スプレッドシート側のデータで上書き
         remoteOrders.forEach((o) => {
           if (o.orderId) orderMap.set(o.orderId, o);
         });
 
-        // ローカルでまだ送信できていないデータ(synced: false)のみ保持
         const savedOrdersStr = localStorage.getItem("pos_orders");
         if (savedOrdersStr) {
           const localOrders: Order[] = JSON.parse(savedOrdersStr);
@@ -163,7 +179,7 @@ export function usePOS() {
       });
 
       const unsentIds = new Set(unsentOrders.map((o) => o.orderId));
-      
+
       setOrders((prev) => {
         const updated = prev.map((o) => (unsentIds.has(o.orderId) ? { ...o, synced: true } : o));
         localStorage.setItem("pos_orders", JSON.stringify(updated));
@@ -182,7 +198,6 @@ export function usePOS() {
     }
   }, [fetchAndMergeOrders]);
 
-  // 定期同期と初期ロード
   useEffect(() => {
     setIsOnline(navigator.onLine);
 
@@ -201,9 +216,14 @@ export function usePOS() {
   }, [fetchAndMergeOrders, syncUnsentOrders]);
 
   const addToCart = (product: Product) => {
+    // 在庫切れの場合は追加させない
+    if (product.stock <= 0) return;
+
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
       if (existing) {
+        // 在庫数以上のカート追加を防止
+        if (existing.quantity >= product.stock) return prev;
         return prev.map((item) =>
           item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
@@ -213,11 +233,14 @@ export function usePOS() {
   };
 
   const updateQuantity = (productId: string, delta: number) => {
+    const product = products.find((p) => p.id === productId);
     setCart((prev) =>
       prev
         .map((item) => {
           if (item.product.id === productId) {
             const newQty = item.quantity + delta;
+            // 在庫上限をチェック
+            if (product && newQty > product.stock) return item;
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
           return item;
@@ -242,9 +265,9 @@ export function usePOS() {
   const discountAmount = multiDiscount + couponDiscount;
   const totalAmount = Math.max(0, subtotal - discountAmount);
 
+  // 会計完了（在庫を自動減算）
   const completeOrder = (receivedAmount: number): Order => {
     const nextOrderNumber = orders.length + 1;
-    // 完全に一意な ID を生成（ランダム英数字を付与して重複を100%防止）
     const uniqueId = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     const newOrder: Order = {
@@ -269,6 +292,16 @@ export function usePOS() {
       synced: false,
     };
 
+    // ★ 在庫数を自動減算処理
+    const updatedProducts = products.map((p) => {
+      const cartItem = cart.find((item) => item.product.id === p.id);
+      if (cartItem) {
+        return { ...p, stock: Math.max(0, p.stock - cartItem.quantity) };
+      }
+      return p;
+    });
+    saveProductsToStorage(updatedProducts);
+
     const updatedOrders = [newOrder, ...orders];
     setOrders(updatedOrders);
     localStorage.setItem("pos_orders", JSON.stringify(updatedOrders));
@@ -279,9 +312,23 @@ export function usePOS() {
     return newOrder;
   };
 
-  const cancelOrder = (orderId: string) => {
+  // 注文キャンセル（在庫を自動復元）
+// 注文キャンセル（在庫戻し選択に対応）
+  const cancelOrder = (orderId: string, restoreStock: boolean = true) => {
     const targetOrder = orders.find((o) => o.orderId === orderId);
-    if (!targetOrder) return;
+    if (!targetOrder || targetOrder.status === "CANCELLED") return;
+
+    // restoreStock が true の場合のみ、在庫数を復元処理
+    if (restoreStock) {
+      const updatedProducts = products.map((p) => {
+        const orderItem = targetOrder.items.find((item) => item.id === p.id);
+        if (orderItem) {
+          return { ...p, stock: p.stock + orderItem.quantity };
+        }
+        return p;
+      });
+      saveProductsToStorage(updatedProducts);
+    }
 
     const cancelledOrder: Order = { ...targetOrder, status: "CANCELLED", synced: false };
     const updated = orders.map((o) => (o.orderId === orderId ? cancelledOrder : o));
@@ -295,7 +342,15 @@ export function usePOS() {
     const updated = products.map((p) =>
       p.id === productId ? { ...p, currentPrice: newPrice } : p
     );
-    setProducts(updated);
+    saveProductsToStorage(updated);
+  };
+
+  // ★ 在庫数の手動変更関数
+  const updateProductStock = (productId: string, newStock: number) => {
+    const updated = products.map((p) =>
+      p.id === productId ? { ...p, stock: Math.max(0, newStock) } : p
+    );
+    saveProductsToStorage(updated);
   };
 
   const toggleTimeSale = (active: boolean) => {
@@ -304,7 +359,7 @@ export function usePOS() {
       ...p,
       currentPrice: active ? Math.max(0, p.basePrice - 100) : p.basePrice,
     }));
-    setProducts(updated);
+    saveProductsToStorage(updated);
   };
 
   const changeStaff = (name: string) => setStaffName(name);
@@ -339,6 +394,7 @@ export function usePOS() {
     cancelOrder,
     changeStaff,
     updateProductPrice,
+    updateProductStock, // ★ 追加
     toggleTimeSale,
     updateTargetAmount,
     manualSync: syncUnsentOrders,
