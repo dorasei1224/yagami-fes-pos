@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
-// ⚠️ ここにご自身の Google Apps Script の Web App URL を貼り付けてください
-const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxpu67F6b6Yi_Nsvt9ZLptvm6cVp31A6rFQ9yr26wVdqRYaq5prcS7-Hnsxt8IxKDbl/exec";
+// ⚠️ ご自身の Google Apps Script の Web App URL
+const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzXI6OREZINVr2P0EOmXV7hvG98rJaG80UDgQPVjW0qhwuvCjAv8BXIRp1bvqYdsGKY/exec";
 
 export interface Product {
   id: string;
@@ -59,122 +59,146 @@ export function usePOS() {
   const [targetAmount, setTargetAmount] = useState<number>(50000);
   const [isTimeSale, setIsTimeSale] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // 送信中の重複実行を防ぐフラグ
   const isSyncingRef = useRef<boolean>(false);
 
-  // GASへの一括/単一送信処理
-  const sendToGAS = async (orderData: Order | Order[]) => {
-    if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL.includes("YOUR_GAS")) return false;
-    try {
-      await fetch(GAS_WEB_APP_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderData),
-      });
-      return true;
-    } catch (err) {
-      console.error("GAS送信失敗（オフラインまたはエラー）:", err);
-      return false;
-    }
-  };
+  // 1. スプレッドシートからデータを取得し、重複を除外してマージ
+  const fetchAndMergeOrders = useCallback(async () => {
+    if (!navigator.onLine || !GAS_WEB_APP_URL || GAS_WEB_APP_URL.includes("YOUR_GAS")) return;
 
-  // 未送信データを全件一括同期するメイン関数
+    try {
+      setIsSyncing(true);
+      const fetchUrl = `${GAS_WEB_APP_URL}?t=${Date.now()}`;
+      const res = await fetch(fetchUrl, {
+        method: "GET",
+        headers: { "Accept": "application/json" }
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+
+      if (data.status === "success" && Array.isArray(data.orders)) {
+        const remoteOrders: Order[] = data.orders.map((o: any) => {
+          let parsedItems = [];
+          try {
+            parsedItems = typeof o.items === "string" ? JSON.parse(o.items) : o.items;
+          } catch (e) {
+            parsedItems = [];
+          }
+
+          return {
+            ...o,
+            orderNumber: Number(o.orderNumber) || 0,
+            totalQuantity: Number(o.totalQuantity) || 0,
+            subtotal: Number(o.subtotal) || 0,
+            discountAmount: Number(o.discountAmount) || 0,
+            totalAmount: Number(o.totalAmount) || 0,
+            receivedAmount: Number(o.receivedAmount) || 0,
+            changeAmount: Number(o.changeAmount) || 0,
+            hasCoupon: String(o.hasCoupon) === "true",
+            items: parsedItems,
+            synced: true,
+          };
+        });
+
+        // 重複を除外するための Map 処理
+        const orderMap = new Map<string, Order>();
+
+        // スプレッドシート側のデータで上書き
+        remoteOrders.forEach((o) => {
+          if (o.orderId) orderMap.set(o.orderId, o);
+        });
+
+        // ローカルでまだ送信できていないデータ(synced: false)のみ保持
+        const savedOrdersStr = localStorage.getItem("pos_orders");
+        if (savedOrdersStr) {
+          const localOrders: Order[] = JSON.parse(savedOrdersStr);
+          localOrders.forEach((o) => {
+            if (!o.synced && o.orderId) {
+              orderMap.set(o.orderId, o);
+            }
+          });
+        }
+
+        const mergedOrders = Array.from(orderMap.values()).sort(
+          (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+
+        setOrders(mergedOrders);
+        localStorage.setItem("pos_orders", JSON.stringify(mergedOrders));
+      }
+    } catch (err) {
+      console.error("データ同期エラー:", err);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+
+  // 2. 未送信データを送信する関数
   const syncUnsentOrders = useCallback(async () => {
     if (!navigator.onLine || isSyncingRef.current) return;
 
-    // LocalStorageから最新の注文リストを直接読み出し（ステートのズレ防止）
     const savedOrdersStr = localStorage.getItem("pos_orders");
     if (!savedOrdersStr) return;
 
     const currentOrders: Order[] = JSON.parse(savedOrdersStr);
     const unsentOrders = currentOrders.filter((o) => !o.synced);
 
-    if (unsentOrders.length === 0) return;
+    if (unsentOrders.length === 0) {
+      await fetchAndMergeOrders();
+      return;
+    }
 
     isSyncingRef.current = true;
+    setIsSyncing(true);
 
-    // 未送信データをまとめてGASへ送信
-    const success = await sendToGAS(unsentOrders);
+    try {
+      await fetch(GAS_WEB_APP_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify(unsentOrders),
+      });
 
-    if (success) {
       const unsentIds = new Set(unsentOrders.map((o) => o.orderId));
+      
       setOrders((prev) => {
         const updated = prev.map((o) => (unsentIds.has(o.orderId) ? { ...o, synced: true } : o));
         localStorage.setItem("pos_orders", JSON.stringify(updated));
         return updated;
       });
+
+      setTimeout(async () => {
+        await fetchAndMergeOrders();
+        isSyncingRef.current = false;
+        setIsSyncing(false);
+      }, 1500);
+    } catch (err) {
+      console.error("POST失敗:", err);
+      isSyncingRef.current = false;
+      setIsSyncing(false);
     }
+  }, [fetchAndMergeOrders]);
 
-    isSyncingRef.current = false;
-  }, []);
-
-  // 初期化・ネットワーク検知・タイマー自動同期の設定
+  // 定期同期と初期ロード
   useEffect(() => {
     setIsOnline(navigator.onLine);
-
-    const savedProducts = localStorage.getItem("pos_products");
-    if (savedProducts) setProducts(JSON.parse(savedProducts));
 
     const savedOrdersStr = localStorage.getItem("pos_orders");
     if (savedOrdersStr) setOrders(JSON.parse(savedOrdersStr));
 
-    const savedStaff = localStorage.getItem("pos_staff");
-    if (savedStaff) setStaffName(savedStaff);
+    fetchAndMergeOrders();
 
-    const savedTarget = localStorage.getItem("pos_target");
-    if (savedTarget) setTargetAmount(Number(savedTarget));
-
-    // ★ 1. オンライン復帰時の自動検知＆即時同期
-    const handleOnline = () => {
-      setIsOnline(true);
-      syncUnsentOrders();
-    };
-
-    const handleOffline = () => {
-      setIsOnline(false);
-    };
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
-    // ★ 2. オンライン中、5秒ごとにバックグラウンドで自動同期チェック
     const intervalId = setInterval(() => {
       if (navigator.onLine) {
         syncUnsentOrders();
       }
     }, 5000);
 
-    // 初回読み込み時にも未送信分があれば送信トライ
-    if (navigator.onLine) {
-      syncUnsentOrders();
-    }
-
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-      clearInterval(intervalId);
-    };
-  }, [syncUnsentOrders]);
-
-  const updateProductPrice = (productId: string, newPrice: number) => {
-    const updated = products.map((p) =>
-      p.id === productId ? { ...p, currentPrice: newPrice } : p
-    );
-    setProducts(updated);
-    localStorage.setItem("pos_products", JSON.stringify(updated));
-  };
-
-  const toggleTimeSale = (active: boolean) => {
-    setIsTimeSale(active);
-    const updated = products.map((p) => ({
-      ...p,
-      currentPrice: active ? Math.max(0, p.basePrice - 100) : p.basePrice,
-    }));
-    setProducts(updated);
-    localStorage.setItem("pos_products", JSON.stringify(updated));
-  };
+    return () => clearInterval(intervalId);
+  }, [fetchAndMergeOrders, syncUnsentOrders]);
 
   const addToCart = (product: Product) => {
     setCart((prev) => {
@@ -218,11 +242,13 @@ export function usePOS() {
   const discountAmount = multiDiscount + couponDiscount;
   const totalAmount = Math.max(0, subtotal - discountAmount);
 
-  // 会計完了（ローカルに即時書き込み ➔ 次のタイマーまたは即時実行で同期）
   const completeOrder = (receivedAmount: number): Order => {
     const nextOrderNumber = orders.length + 1;
+    // 完全に一意な ID を生成（ランダム英数字を付与して重複を100%防止）
+    const uniqueId = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
     const newOrder: Order = {
-      orderId: `ORD-${Date.now()}`,
+      orderId: uniqueId,
       orderNumber: nextOrderNumber,
       timestamp: new Date().toISOString(),
       staffName,
@@ -248,13 +274,11 @@ export function usePOS() {
     localStorage.setItem("pos_orders", JSON.stringify(updatedOrders));
     clearCart();
 
-    // バックグラウンドで同期を直ちにキューイング
     setTimeout(() => syncUnsentOrders(), 100);
 
     return newOrder;
   };
 
-  // 返金・キャンセル処理
   const cancelOrder = (orderId: string) => {
     const targetOrder = orders.find((o) => o.orderId === orderId);
     if (!targetOrder) return;
@@ -264,19 +288,27 @@ export function usePOS() {
     setOrders(updated);
     localStorage.setItem("pos_orders", JSON.stringify(updated));
 
-    // バックグラウンドで同期を直ちにキューイング
     setTimeout(() => syncUnsentOrders(), 100);
   };
 
-  const changeStaff = (name: string) => {
-    setStaffName(name);
-    localStorage.setItem("pos_staff", name);
+  const updateProductPrice = (productId: string, newPrice: number) => {
+    const updated = products.map((p) =>
+      p.id === productId ? { ...p, currentPrice: newPrice } : p
+    );
+    setProducts(updated);
   };
 
-  const updateTargetAmount = (amount: number) => {
-    setTargetAmount(amount);
-    localStorage.setItem("pos_target", amount.toString());
+  const toggleTimeSale = (active: boolean) => {
+    setIsTimeSale(active);
+    const updated = products.map((p) => ({
+      ...p,
+      currentPrice: active ? Math.max(0, p.basePrice - 100) : p.basePrice,
+    }));
+    setProducts(updated);
   };
+
+  const changeStaff = (name: string) => setStaffName(name);
+  const updateTargetAmount = (amount: number) => setTargetAmount(amount);
 
   const validOrders = orders.filter((o) => o.status === "COMPLETED");
   const totalSales = validOrders.reduce((sum, o) => sum + o.totalAmount, 0);
@@ -291,6 +323,7 @@ export function usePOS() {
     targetAmount,
     isTimeSale,
     isOnline,
+    isSyncing,
     unsentCount,
     totalQuantity,
     subtotal,
