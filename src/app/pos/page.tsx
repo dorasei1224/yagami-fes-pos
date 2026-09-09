@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePOS, Order } from "@/hooks/usePOS";
 
@@ -31,6 +31,17 @@ export default function POSPage() {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [receivedAmount, setReceivedAmount] = useState<number>(0);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
+  const [notification, setNotification] = useState<string | null>(null);
+
+  // トースト通知を3秒後に自動クリアする
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => {
+        setNotification(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   const filteredProducts = products.filter((p) =>
     selectedCategory === "all" ? true : p.category === selectedCategory
@@ -45,6 +56,7 @@ export default function POSPage() {
     setLastOrder(order);
     setIsPaymentModalOpen(false);
     setReceivedAmount(0);
+    setNotification(`注文 #${order.orderNumber} の会計が完了しました`);
   };
 
   const handleQuickMoney = (amount: number) => {
@@ -52,7 +64,7 @@ export default function POSPage() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-100 text-neutral-800 flex flex-col font-sans selection:bg-neutral-200">
+    <div className="min-h-screen bg-neutral-100 text-neutral-800 flex flex-col font-sans selection:bg-neutral-200 relative">
       {/* ヘッダー */}
       <header className="bg-white border-b border-neutral-200 px-4 py-3 flex justify-between items-center sticky top-0 z-20">
         <div className="flex items-center gap-3">
@@ -94,26 +106,6 @@ export default function POSPage() {
           </Link>
         </div>
       </header>
-
-      {/* 直前会計結果のアラートバー */}
-      {lastOrder && (
-        <div className="bg-emerald-900 text-white px-4 py-3 flex justify-between items-center animate-fade-in">
-          <div>
-            <div className="text-xs text-emerald-300 font-medium">
-              会計完了 注文番号 #{lastOrder.orderNumber}
-            </div>
-            <div className="text-sm font-semibold">
-              お釣り: {(lastOrder?.changeAmount ?? 0).toLocaleString()} 円
-            </div>
-          </div>
-          <button
-            onClick={() => setLastOrder(null)}
-            className="text-xs bg-emerald-800 hover:bg-emerald-700 px-3 py-1.5 rounded font-medium border border-emerald-600 transition"
-          >
-            閉じる
-          </button>
-        </div>
-      )}
 
       {/* モバイル用タブ切り替え（画面幅 md 未満で表示） */}
       <div className="md:hidden flex border-b border-neutral-200 bg-white sticky top-[57px] z-10">
@@ -173,7 +165,7 @@ export default function POSPage() {
             ))}
           </div>
 
-          {/* 商品グリッド（タッチしやすい大きめのカード） */}
+          {/* 商品グリッド */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4">
             {filteredProducts.map((product) => (
               <button
@@ -323,21 +315,37 @@ export default function POSPage() {
         </div>
       </main>
 
-      {/* 会計モーダル（テンキー機能つき） */}
+      {/* 右下トースト通知（3秒で自動消去・画面揺れなし） */}
+      {notification && (
+        <div className="fixed bottom-5 right-5 z-50 animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <div className="bg-neutral-900/90 backdrop-blur-md text-white px-4 py-3 rounded-xl shadow-xl border border-neutral-700/60 flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+            <p className="text-xs font-semibold pr-2">{notification}</p>
+            <button
+              onClick={() => setNotification(null)}
+              className="text-neutral-400 hover:text-white transition text-xs pl-1"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 会計モーダル（デザイン改善：ほんのり暗いバックドロップ＆上品なカード感） */}
       {isPaymentModalOpen && (
-        <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-xl border border-neutral-200">
-            <div className="flex justify-between items-center border-b pb-2">
-              <h3 className="font-bold text-neutral-800">お支払い手続き</h3>
+        <div className="fixed inset-0 bg-neutral-950/30 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-neutral-100">
+            <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
+              <h3 className="font-bold text-neutral-800 text-base">お支払い手続き</h3>
               <button
                 onClick={() => setIsPaymentModalOpen(false)}
-                className="text-neutral-400 hover:text-neutral-600 text-sm"
+                className="text-neutral-400 hover:text-neutral-600 text-sm p-1"
               >
                 ✕
               </button>
             </div>
 
-            <div className="space-y-1 bg-neutral-50 p-3 rounded-xl border border-neutral-100">
+            <div className="space-y-1.5 bg-neutral-50 p-3.5 rounded-xl border border-neutral-100">
               <div className="flex justify-between text-xs text-neutral-500">
                 <span>請求合計</span>
                 <span className="font-bold text-neutral-800">
@@ -350,11 +358,11 @@ export default function POSPage() {
                   {receivedAmount.toLocaleString()} 円
                 </span>
               </div>
-              <div className="flex justify-between text-xs pt-1 border-t border-neutral-200 font-bold">
+              <div className="flex justify-between text-xs pt-2 border-t border-neutral-200 font-bold">
                 <span>お釣り</span>
                 <span
                   className={
-                    receivedAmount >= totalAmount ? "text-emerald-600" : "text-rose-600"
+                    receivedAmount >= totalAmount ? "text-emerald-600 text-sm" : "text-rose-600"
                   }
                 >
                   {receivedAmount >= totalAmount
@@ -370,18 +378,18 @@ export default function POSPage() {
                 <button
                   key={amt}
                   onClick={() => handleQuickMoney(amt)}
-                  className="py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-medium text-xs rounded-lg transition"
+                  className="py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-medium text-xs rounded-lg transition border border-neutral-200/50"
                 >
                   +{amt}
                 </button>
               ))}
             </div>
 
-            {/* 直接入力 */}
+            {/* 直接入力 ＆ クリア */}
             <div className="flex gap-2">
               <button
                 onClick={() => setReceivedAmount(0)}
-                className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 text-xs font-medium rounded-lg"
+                className="px-3 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 text-xs font-medium rounded-lg border border-neutral-200/50"
               >
                 クリア
               </button>
@@ -397,14 +405,14 @@ export default function POSPage() {
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => setIsPaymentModalOpen(false)}
-                className="flex-1 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-medium text-xs rounded-xl transition"
+                className="flex-1 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold text-xs rounded-xl transition"
               >
                 キャンセル
               </button>
               <button
                 disabled={receivedAmount < totalAmount}
                 onClick={handleCompletePayment}
-                className="flex-1 py-2.5 bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white font-bold text-xs rounded-xl transition shadow-sm"
+                className="flex-1 py-3 bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white font-bold text-xs rounded-xl transition shadow-sm"
               >
                 会計完了
               </button>
